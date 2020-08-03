@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Security Group template with YAML - SecurityGroup depends on base/1-vpc-cfn.yml.
+
+Parameters:
+  VPCName:
+    Description: Target VPC Stack Name
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z][-a-zA-Z0-9]*$
+    Default: debugroom-mynavi-sonarqube-cfn-vpc
+  VPCCiderBlock:
+    Description: CiderBlock paramater for VPC
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    Default: 10.2.0.0/16
+
+Resources:
+  SecurityGroupPublicALB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${VPCName}-SecurityGroupPublicALB
+      GroupDescription: http access
+      VpcId:
+        Fn::ImportValue: !Sub ${VPCName}-VPCID
+      Tags:
+        - Key : Name
+          Value: !Sub ${VPCName}-SecurityGroupPublicALB
+
+  SecurityGroupInggressPublicALBHTTP:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupPublicALB
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+
+  SecurityGroupInggressPublicALBHTTPS:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupPublicALB
+      IpProtocol: tcp
+      FromPort: 443
+      ToPort: 443
+      CidrIp: 0.0.0.0/0
+
+  SecurityGroupPublicEcsCluster:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${VPCName}-SecurityGroupPublicEcsCluster
+      GroupDescription: http access only alb
+      VpcId:
+        Fn::ImportValue: !Sub ${VPCName}-VPCID
+      Tags:
+        - Key : Name
+          Value: !Sub ${VPCName}-SecurityGroupPublicEcsCluster
+
+  SecurityGroupIngressPublicEcsCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupPublicEcsCluster
+      IpProtocol: tcp
+      FromPort: 32768
+      ToPort: 61000
+      SourceSecurityGroupId: !Ref SecurityGroupPublicALB
+
+  SecurityGroupRdsPostgres:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${VPCName}-SecurityGroupRdsPostgres
+      GroupDescription: db access for public ecs cluster subnet
+      VpcId:
+        Fn::ImportValue: !Sub ${VPCName}-VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub ${VPCName}-SecurityGroupRdsPostgres
+
+  SecurityGroupIngressRdsPostgresForPublicEcsCluster:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupRdsPostgres
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref SecurityGroupPublicEcsCluster
+
+  SecurityGroupLambda:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub ${VPCName}-SecurityGroupLambda
+      GroupDescription: lambda access rds
+      VpcId:
+        Fn::ImportValue: !Sub ${VPCName}-VPCID
+      Tags:
+        - Key: Name
+          Value: !Sub ${VPCName}-SecurityGroupLambda
+
+  SecurityGroupIngressRdsPostgresForLambda:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref SecurityGroupRdsPostgres
+      IpProtocol: tcp
+      FromPort: 5432
+      ToPort: 5432
+      SourceSecurityGroupId: !Ref SecurityGroupLambda
+
+Outputs:
+  SecurityGroupPublicALB:
+    Description: Security Group for PUblic ALB
+    Value: !Ref SecurityGroupPublicALB
+    Export:
+      Name: !Sub ${VPCName}-SecurityGroupPublicALB
+
+
+  SecurityGroupPublicEcsCluster:
+    Description: Security Group for Public ECS Cluster
+    Value: !Ref SecurityGroupPublicEcsCluster
+    Export:
+      Name: !Sub ${VPCName}-SecurityGroupPublicEcsCluster
+
+  SecurityGroupRdsPostgres:
+    Description: Security Group RDS PostgreSQL
+    Value: !Ref SecurityGroupRdsPostgres
+    Export:
+      Name: !Sub ${VPCName}-SecurityGroupRdsPostgres
+
+  SecurityGroupLambda:
+    Description: Security Group Lambda
+    Value: !Ref SecurityGroupLambda
+    Export:
+      Name: !Sub ${VPCName}-SecurityGroupLambda

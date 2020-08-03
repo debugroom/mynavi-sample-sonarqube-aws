@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: SonarQube server template with YAML - ECS Service Launch Depends on base/1-vpc-cfn.yml, base/2-sg-cfn.yml, base/3-ng-cfn.yml, base/3-alb-cfn.yml, sonarqube-server/4-tg-cfn.yml, base/3-ecs-cluster-cfn.yml, sonarqube-server/4-ecs-task-cfn.yml
+
+Parameters:
+  VPCName:
+    Description: Target VPC Stack Name
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z][-a-zA-Z0-9]*$
+    Default: debugroom-mynavi-sonarqube-cfn-vpc
+
+Resources:
+  MattermostService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster:
+        Fn::ImportValue: !Sub ${VPCName}-PublicEcsCluster
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 60
+      TaskDefinition:
+        Fn::ImportValue: !Sub ${VPCName}-SonarQubeEcsTaskDefinition
+      LaunchType: EC2
+      LoadBalancers:
+        - ContainerName: "debugroom-mynavi-sonarqube-cfn-server"
+          ContainerPort: 9000
+          TargetGroupArn:
+            Fn::ImportValue: !Sub ${VPCName}-SonarQube-TargetGroup

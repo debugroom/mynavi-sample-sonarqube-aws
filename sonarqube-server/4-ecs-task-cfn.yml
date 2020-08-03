@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Sonarqube ECS Task template with YAML - ECS Task Definition depends on base/1-vpc-cfn.yml, base/2-sg-cfn.yml, base/3-ecs-cluster-cfn.yml
+
+Parameters:
+  VPCName:
+    Description: Target VPC Stack Name
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z][-a-zA-Z0-9]*$
+    Default: debugroom-mynavi-sonarqube-cfn-vpc
+
+Mappings:
+  SonarQubeTaskDefinitionMap:
+    Task:
+      "Memory" : 2048
+      "Cpu" : 1024
+      "ContainerName" : "debugroom-mynavi-sonarqube-cfn-server"
+      "ContainerImage" : "debugroom/sonarqube-server-cfn:latest"
+      "ContainerPort" : 9000
+      "HostPort" : 0
+      "ContainerMemory" : 2048
+      "Profile" : "dev"
+
+Resources:
+  SonarQubeECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/AmazonSSMReadOnlyAccess
+        - arn:aws:iam::aws:policy/SecretsManagerReadWrite
+
+  SonarQubeECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: sonarqube-server
+      RequiresCompatibilities:
+        - EC2
+      Memory: !FindInMap [SonarQubeTaskDefinitionMap, Task, Memory]
+      Cpu: !FindInMap [SonarQubeTaskDefinitionMap, Task, Cpu]
+      NetworkMode: bridge
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt SonarQubeECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: !FindInMap [SonarQubeTaskDefinitionMap, Task, ContainerName]
+          Image: !FindInMap [SonarQubeTaskDefinitionMap, Task, ContainerImage]
+          PortMappings:
+            - ContainerPort: !FindInMap [SonarQubeTaskDefinitionMap, Task, ContainerPort]
+              HostPort: !FindInMap [SonarQubeTaskDefinitionMap, Task, HostPort]
+          Memory: !FindInMap [SonarQubeTaskDefinitionMap, Task, ContainerMemory]
+          Environment:
+            - Name: SONARQUBE_RDS_ENDPOINT
+              Value:
+                Fn::ImportValue: !Sub ${VPCName}-RDS-Endpoint
+          Secrets:
+            - Name: SONARQUBE_RDS_PASSWORD
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/mynavi-sonarqube-rds-sonar-password"
+
+Outputs:
+  SonarQubeECSTaskDefinition:
+    Description: SonarQube ECS Task Definition
+    Value: !Ref SonarQubeECSTaskDefinition
+    Export:
+      Name: !Sub ${VPCName}-SonarQubeEcsTaskDefinition

@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: ECS Cluster template with YAML - ECS Cluster Depends on base/1-vpc-cfn.yml, base/2-sg-cfn.yml
+
+Parameters:
+  VPCName:
+    Description: Target VPC Stack Name
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z][-a-zA-Z0-9]*$
+    Default: debugroom-mynavi-sonarqube-cfn-vpc
+  ECSAMI:
+    Description: AMI ID
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id
+
+Mappings:
+  PublicClusterDefinitionMap:
+    Instance:
+      "InstanceType" : "m5.large"
+      "DesiredCapacity" : 1
+      "EC2InstanceMaxSizeOfECS": 2
+      "KeyPairName" : "test"
+
+Resources:
+  ECSRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+  IamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ECSRole
+
+  PublicECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub ${VPCName}-public-ecs-cluster
+      Tags:
+        - Key: Name
+          Value: PublicECSCluster
+
+  PublicECSAutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - Fn::ImportValue: !Sub ${VPCName}-PublicSubnet1
+        - Fn::ImportValue: !Sub ${VPCName}-PublicSubnet2
+      LaunchConfigurationName: !Ref PublicECSLaunchConfiguration
+      MinSize: '0'
+      MaxSize: !FindInMap [PublicClusterDefinitionMap, Instance, EC2InstanceMaxSizeOfECS]
+      DesiredCapacity: !FindInMap [PublicClusterDefinitionMap, Instance, DesiredCapacity]
+      Tags:
+        - Key: Name
+          Value: !Sub ${VPCName}-PublicECSCluster
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT5M
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: true
+
+  PublicECSLaunchConfiguration:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref ECSAMI
+      InstanceType: !FindInMap [PublicClusterDefinitionMap, Instance, InstanceType]
+      IamInstanceProfile: !Ref IamInstanceProfile
+      #      KeyName: !FindInMap [PublicClusterDefinitionMap, Instance, KeyPairName]
+      SecurityGroups:
+        - Fn::ImportValue: !Sub ${VPCName}-SecurityGroupPublicEcsCluster
+      AssociatePublicIpAddress: true
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          echo ECS_CLUSTER=${PublicECSCluster} >> /etc/ecs/ecs.config
+          yum install -y aws-cfn-bootstrap jq
+          # Get the current region from the instance metadata
+          region=$(curl -s http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r .region)
+          # Install the SSM agent RPM
+          yum install -y https://amazon-ssm-${AWS::Region}.s3.amazonaws.com/latest/linux_amd64/amazon-ssm-agent.rpm
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource PublicECSAutoScalingGroup --region ${AWS::Region}
+
+Outputs:
+  PublicECSCluster:
+    Description: Public ECS Cluster
+    Value: !Ref PublicECSCluster
+    Export:
+      Name: !Sub ${VPCName}-PublicEcsCluster

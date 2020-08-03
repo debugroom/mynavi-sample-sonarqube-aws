@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: ALB CloudFormation template with YAML.  Depends On base/1-vpc-cfn.yml, base/2-sg-cfn.yml and prepare certification using certification manager.
+
+Mappings:
+  DeployEnvironmentMap:
+    Production:
+      "Protocol": "HTTPS"
+      "Port": 443
+    Dev:
+      "Protocol": "HTTP"
+      "Port": 80
+
+Parameters:
+  VPCName:
+    Description: Target VPC Name
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[a-zA-Z][-a-zA-Z0-9]*$
+    Default: debugroom-mynavi-sonarqube-cfn-vpc
+  EnvType:
+    Description: Which environments to deploy your service.
+    Type: String
+    AllowedValues: ["Dev", "Production"]
+    Default: Dev
+  HealthCheckPath:
+    Description: health check path
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: ^[-¥.¥/a-zA-Z0-9]*$
+    Default: /
+  Certificate:
+    Description: SSL Certificate
+    Type: String
+    MinLength: 1
+    MaxLength: 128
+    AllowedPattern: ^[-_ .:/a-zA-Z0-9]*
+    Default: arn:aws:acm::xxxxxxxxxxxx:server-certificate/cert.example.jp
+Conditions:
+  ProductionResources: {"Fn::Equals" : [{"Ref":"EnvType"}, "Production"]}
+
+Resources:
+  PublicALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      # The load balancer name cannot be longer than '32' characters
+      Name: sonarqube-cfn-publicalb
+      Subnets:
+        - Fn::ImportValue: !Sub ${VPCName}-PublicSubnet1
+        - Fn::ImportValue: !Sub ${VPCName}-PublicSubnet2
+      SecurityGroups:
+        - Fn::ImportValue: !Sub ${VPCName}-SecurityGroupPublicALB
+
+  PublicALBDefaultTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      # Target group name cannot be longer than '32' characters
+      Name: sonarqube-cfn-publicalb-tg
+      VpcId:
+        Fn::ImportValue: !Sub ${VPCName}-VPCID
+      Port: 80
+      Protocol: HTTP
+      HealthCheckPath: !Ref HealthCheckPath
+      HealthCheckIntervalSeconds: 60
+      HealthyThresholdCount: 2
+      TargetGroupAttributes:
+        - Key: deregistration_delay.timeout_seconds
+          Value: '60'
+
+  PublicALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref PublicALB
+      Port: !FindInMap [DeployEnvironmentMap, !Ref EnvType, Port]
+      Protocol: !FindInMap [DeployEnvironmentMap, !Ref EnvType, Protocol]
+      Certificates:
+        - CertificateArn: !If ["ProductionResources", !Ref Certificate, !Ref "AWS::NoValue"]
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref PublicALBDefaultTargetGroup
+
+Outputs:
+  PublicALBDNS:
+    Description: Public DNS Name
+    Value: !GetAtt PublicALB.DNSName
+    Export:
+      Name: !Sub ${VPCName}-PublicALBDNS
+
+  PublicALBListener:
+    Description: Public ALB Listener
+    Value: !Ref PublicALBListener
+    Export:
+      Name: !Sub ${VPCName}-PublicALB-Listener
